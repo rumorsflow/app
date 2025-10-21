@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/caarlos0/env/v11"
+	"github.com/gowool/hook"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 )
@@ -27,7 +28,7 @@ type (
 )
 
 type BootstrapEvent struct {
-	Event
+	hook.Event
 	App     App
 	Ctx     context.Context
 	Logger  fxevent.Logger
@@ -35,13 +36,13 @@ type BootstrapEvent struct {
 }
 
 type StartEvent struct {
-	Event
+	hook.Event
 	App App
 	Ctx context.Context
 }
 
 type StopEvent struct {
-	Event
+	hook.Event
 	App       App
 	Ctx       context.Context
 	IsRestart bool
@@ -51,13 +52,13 @@ type App interface {
 	Name() string
 	Version() string
 	LoadConfig(outs ...any) error
-	OnBootstrap() *Hook[*BootstrapEvent]
+	OnBootstrap() *hook.Hook[*BootstrapEvent]
 	Bootstrap(ctx context.Context) error
 	StartTimeout() time.Duration
-	OnStart() *Hook[*StartEvent]
+	OnStart() *hook.Hook[*StartEvent]
 	Start(ctx context.Context) error
 	StopTimeout() time.Duration
-	OnStop() *Hook[*StopEvent]
+	OnStop() *hook.Hook[*StopEvent]
 	Stop(ctx context.Context) error
 	Restart(ctx context.Context) error
 	Run(ctx context.Context) error
@@ -85,9 +86,9 @@ type BaseApp struct {
 	configUnmarshal func(data []byte, out any) error
 	fxApp           *fx.App
 	fxLogger        fxevent.Logger
-	onBootstrap     *Hook[*BootstrapEvent]
-	onStart         *Hook[*StartEvent]
-	onStop          *Hook[*StopEvent]
+	onBootstrap     *hook.Hook[*BootstrapEvent]
+	onStart         *hook.Hook[*StartEvent]
+	onStop          *hook.Hook[*StopEvent]
 }
 
 func NewBaseApp(cfg BaseAppConfig) *BaseApp {
@@ -100,9 +101,9 @@ func NewBaseApp(cfg BaseAppConfig) *BaseApp {
 		configFiles:     cfg.ConfigFiles,
 		configRaw:       cfg.ConfigRaw,
 		configUnmarshal: cfg.ConfigUnmarshal,
-		onBootstrap:     &Hook[*BootstrapEvent]{},
-		onStart:         &Hook[*StartEvent]{},
-		onStop:          &Hook[*StopEvent]{},
+		onBootstrap:     &hook.Hook[*BootstrapEvent]{},
+		onStart:         &hook.Hook[*StartEvent]{},
+		onStop:          &hook.Hook[*StopEvent]{},
 	}
 }
 
@@ -122,15 +123,15 @@ func (app *BaseApp) StopTimeout() time.Duration {
 	return app.stopTimeout
 }
 
-func (app *BaseApp) OnBootstrap() *Hook[*BootstrapEvent] {
+func (app *BaseApp) OnBootstrap() *hook.Hook[*BootstrapEvent] {
 	return app.onBootstrap
 }
 
-func (app *BaseApp) OnStart() *Hook[*StartEvent] {
+func (app *BaseApp) OnStart() *hook.Hook[*StartEvent] {
 	return app.onStart
 }
 
-func (app *BaseApp) OnStop() *Hook[*StopEvent] {
+func (app *BaseApp) OnStop() *hook.Hook[*StopEvent] {
 	return app.onStop
 }
 
