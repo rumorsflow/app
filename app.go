@@ -64,7 +64,7 @@ type App interface {
 	Run(ctx context.Context) error
 }
 
-type BaseAppConfig struct {
+type Config struct {
 	StartTimeout    time.Duration
 	StopTimeout     time.Duration
 	ConfigUnmarshal func(data []byte, out any) error
@@ -91,7 +91,7 @@ type BaseApp struct {
 	onStop          *hook.Hook[*StopEvent]
 }
 
-func NewBaseApp(cfg BaseAppConfig) *BaseApp {
+func NewBaseApp(cfg Config) *BaseApp {
 	return &BaseApp{
 		startTimeout:    cfg.StartTimeout,
 		stopTimeout:     cfg.StopTimeout,
