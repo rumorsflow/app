@@ -27,7 +27,7 @@ type (
 	}
 )
 
-type BootstrapEvent struct {
+type BootEvent struct {
 	hook.Event
 	App     App
 	Ctx     context.Context
@@ -52,8 +52,8 @@ type App interface {
 	Name() string
 	Version() string
 	LoadConfig(outs ...any) error
-	OnBootstrap() *hook.Hook[*BootstrapEvent]
-	Bootstrap(ctx context.Context) error
+	OnBoot() *hook.Hook[*BootEvent]
+	Boot(ctx context.Context) error
 	StartTimeout() time.Duration
 	OnStart() *hook.Hook[*StartEvent]
 	Start(ctx context.Context) error
@@ -86,9 +86,29 @@ type BaseApp struct {
 	configUnmarshal func(data []byte, out any) error
 	fxApp           *fx.App
 	fxLogger        fxevent.Logger
-	onBootstrap     *hook.Hook[*BootstrapEvent]
+	onBootstrap     *hook.Hook[*BootEvent]
 	onStart         *hook.Hook[*StartEvent]
 	onStop          *hook.Hook[*StopEvent]
+}
+
+func BootOptions(options ...fx.Option) func(*BootEvent) error {
+	return func(event *BootEvent) error {
+		event.Options = append(event.Options, options...)
+		return event.Next()
+	}
+}
+
+func BootConfig[C any]() func(*BootEvent) error {
+	return func(event *BootEvent) error {
+		var cfg C
+		if err := event.App.LoadConfig(&cfg); err != nil {
+			return err
+		}
+
+		event.Options = append(event.Options, fx.Supply(cfg))
+
+		return event.Next()
+	}
 }
 
 func NewBaseApp(cfg Config) *BaseApp {
@@ -101,7 +121,7 @@ func NewBaseApp(cfg Config) *BaseApp {
 		configFiles:     cfg.ConfigFiles,
 		configRaw:       cfg.ConfigRaw,
 		configUnmarshal: cfg.ConfigUnmarshal,
-		onBootstrap:     &hook.Hook[*BootstrapEvent]{},
+		onBootstrap:     &hook.Hook[*BootEvent]{},
 		onStart:         &hook.Hook[*StartEvent]{},
 		onStop:          &hook.Hook[*StopEvent]{},
 	}
@@ -123,7 +143,7 @@ func (app *BaseApp) StopTimeout() time.Duration {
 	return app.stopTimeout
 }
 
-func (app *BaseApp) OnBootstrap() *hook.Hook[*BootstrapEvent] {
+func (app *BaseApp) OnBoot() *hook.Hook[*BootEvent] {
 	return app.onBootstrap
 }
 
@@ -175,10 +195,10 @@ func (app *BaseApp) LoadConfig(outs ...any) error {
 	return nil
 }
 
-func (app *BaseApp) Bootstrap(ctx context.Context) error {
-	event := &BootstrapEvent{App: app, Ctx: ctx, Logger: fxevent.NopLogger}
+func (app *BaseApp) Boot(ctx context.Context) error {
+	event := &BootEvent{App: app, Ctx: ctx, Logger: fxevent.NopLogger}
 
-	return app.OnBootstrap().Trigger(event, app.createFxApp)
+	return app.OnBoot().Trigger(event, app.createFxApp)
 }
 
 func (app *BaseApp) Start(ctx context.Context) error {
@@ -213,7 +233,7 @@ func (app *BaseApp) Restart(ctx context.Context) error {
 }
 
 func (app *BaseApp) Run(ctx context.Context) error {
-	if err := app.Bootstrap(ctx); err != nil {
+	if err := app.Boot(ctx); err != nil {
 		return err
 	}
 
@@ -286,7 +306,7 @@ func (app *BaseApp) reset() {
 	app.fxLogger = nil
 }
 
-func (app *BaseApp) createFxApp(event *BootstrapEvent) error {
+func (app *BaseApp) createFxApp(event *BootEvent) error {
 	if event.Logger == nil {
 		return errors.New("app: bootstrap fx event logger is nil")
 	}
