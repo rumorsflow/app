@@ -91,14 +91,14 @@ type BaseApp struct {
 	onStop          *hook.Hook[*StopEvent]
 }
 
-func BootOptions(options ...fx.Option) func(*BootEvent) error {
+func Options(options ...fx.Option) func(*BootEvent) error {
 	return func(event *BootEvent) error {
 		event.Options = append(event.Options, options...)
 		return event.Next()
 	}
 }
 
-func BootConfig[C any]() func(*BootEvent) error {
+func LoadConfig[C any]() func(*BootEvent) error {
 	return func(event *BootEvent) error {
 		var cfg C
 		if err := event.App.LoadConfig(&cfg); err != nil {
