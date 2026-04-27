@@ -25,6 +25,9 @@ type (
 	validatable interface {
 		Validate() error
 	}
+	validatableWithContext interface {
+		ValidateWithContext(context.Context) error
+	}
 )
 
 type BootEvent struct {
@@ -51,7 +54,7 @@ type StopEvent struct {
 type App interface {
 	Name() string
 	Version() string
-	LoadConfig(outs ...any) error
+	LoadConfig(ctx context.Context, outs ...any) error
 	OnBoot() *hook.Hook[*BootEvent]
 	Boot(ctx context.Context) error
 	StartTimeout() time.Duration
@@ -67,7 +70,7 @@ type App interface {
 type Config struct {
 	StartTimeout    time.Duration
 	StopTimeout     time.Duration
-	ConfigUnmarshal func(data []byte, out any) error
+	ConfigUnmarshal func(ctx context.Context, data []byte, out any) error
 	ConfigRaw       []byte
 	ConfigFiles     []string
 	EnvPrefix       string
@@ -83,7 +86,7 @@ type BaseApp struct {
 	envPrefix       string
 	configFiles     []string
 	configRaw       []byte
-	configUnmarshal func(data []byte, out any) error
+	configUnmarshal func(ctx context.Context, data []byte, out any) error
 	fxApp           *fx.App
 	fxLogger        fxevent.Logger
 	onBootstrap     *hook.Hook[*BootEvent]
@@ -101,7 +104,7 @@ func Options(options ...fx.Option) func(*BootEvent) error {
 func LoadConfig[C any]() func(*BootEvent) error {
 	return func(event *BootEvent) error {
 		var cfg C
-		if err := event.App.LoadConfig(&cfg); err != nil {
+		if err := event.App.LoadConfig(event.Ctx, &cfg); err != nil {
 			return err
 		}
 
@@ -155,25 +158,25 @@ func (app *BaseApp) OnStop() *hook.Hook[*StopEvent] {
 	return app.onStop
 }
 
-func (app *BaseApp) LoadConfig(outs ...any) error {
+func (app *BaseApp) LoadConfig(ctx context.Context, outs ...any) error {
 	files := make([][]byte, len(app.configFiles))
 	for i, file := range app.configFiles {
 		data, err := os.ReadFile(file)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to read config file %s: %w", file, err)
 		}
 		files[i] = data
 	}
 
 	for _, out := range outs {
 		if len(app.configRaw) > 0 {
-			if err := app.configUnmarshal(app.configRaw, out); err != nil {
+			if err := app.configUnmarshal(ctx, app.configRaw, out); err != nil {
 				return err
 			}
 		}
 
 		for _, file := range files {
-			if err := app.configUnmarshal(file, out); err != nil {
+			if err := app.configUnmarshal(ctx, file, out); err != nil {
 				return err
 			}
 		}
@@ -184,6 +187,17 @@ func (app *BaseApp) LoadConfig(outs ...any) error {
 
 		if c, ok := out.(defaulter); ok {
 			c.SetDefaults()
+		}
+
+		switch v := out.(type) {
+		case validatableWithContext:
+			if err := v.ValidateWithContext(ctx); err != nil {
+				return fmt.Errorf("failed to validate config: %w", err)
+			}
+		case validatable:
+			if err := v.Validate(); err != nil {
+				return fmt.Errorf("failed to validate config: %w", err)
+			}
 		}
 
 		if v, ok := out.(validatable); ok {
