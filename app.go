@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -87,11 +88,14 @@ type BaseApp struct {
 	configFiles     []string
 	configRaw       []byte
 	configUnmarshal func(ctx context.Context, data []byte, out any) error
-	fxApp           *fx.App
+	fxApp           atomic.Pointer[fx.App]
 	fxLogger        fxevent.Logger
 	onBootstrap     *hook.Hook[*BootEvent]
 	onStart         *hook.Hook[*StartEvent]
 	onStop          *hook.Hook[*StopEvent]
+	stopping        atomic.Bool
+	stopErr         error
+	done            chan struct{}
 }
 
 func Options(options ...fx.Option) func(*BootEvent) error {
@@ -127,6 +131,7 @@ func NewBaseApp(cfg Config) *BaseApp {
 		onBootstrap:     &hook.Hook[*BootEvent]{},
 		onStart:         &hook.Hook[*StartEvent]{},
 		onStop:          &hook.Hook[*StopEvent]{},
+		done:            make(chan struct{}),
 	}
 }
 
@@ -199,12 +204,6 @@ func (app *BaseApp) LoadConfig(ctx context.Context, outs ...any) error {
 				return fmt.Errorf("failed to validate config: %w", err)
 			}
 		}
-
-		if v, ok := out.(validatable); ok {
-			if err := v.Validate(); err != nil {
-				return err
-			}
-		}
 	}
 	return nil
 }
@@ -225,25 +224,55 @@ func (app *BaseApp) Start(ctx context.Context) error {
 }
 
 func (app *BaseApp) Stop(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, app.stopTimeout)
-	defer cancel()
-
-	event := &StopEvent{App: app, Ctx: ctx}
-
-	return app.OnStop().Trigger(event, app.stop)
-}
-
-func (app *BaseApp) Restart(ctx context.Context) error {
-	if runtime.GOOS == "windows" {
-		return errors.New("app: restart is not supported on windows")
+	if !app.stopping.CompareAndSwap(false, true) {
+		<-app.done
+		return app.stopErr
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, app.stopTimeout)
 	defer cancel()
 
+	event := &StopEvent{App: app, Ctx: ctx}
+
+	return app.finish(app.OnStop().Trigger(event, app.stop))
+}
+
+// Restart stops the application and replaces the current process with a new
+// instance of the same binary via exec, keeping the same PID. On success it
+// never returns; stop errors are ignored so a failed graceful shutdown does
+// not prevent the exec.
+//
+// When calling this from code managed by the application itself (an HTTP
+// handler, a worker), detach it — otherwise graceful shutdown waits for the
+// caller while the caller waits for shutdown, until the stop timeout expires:
+//
+//	go func() { _ = app.Restart(context.WithoutCancel(ctx)) }()
+func (app *BaseApp) Restart(ctx context.Context) error {
+	if runtime.GOOS == "windows" {
+		return errors.New("app: restart is not supported on windows")
+	}
+
+	if !app.stopping.CompareAndSwap(false, true) {
+		<-app.done
+		return app.stopErr
+	}
+
+	// Restart is a point of no return: keep the caller's values but drop its
+	// cancellation so a dying request cannot cut the shutdown short.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), app.stopTimeout)
+	defer cancel()
+
 	event := &StopEvent{App: app, Ctx: ctx, IsRestart: true}
 
-	return app.OnStop().Trigger(event, app.stop, app.restart)
+	return app.finish(app.OnStop().Trigger(event, app.stop, app.restart))
+}
+
+// finish records the shutdown outcome and releases everyone blocked on it:
+// concurrent Stop/Restart callers and Run's select.
+func (app *BaseApp) finish(err error) error {
+	app.stopErr = err
+	close(app.done)
+	return err
 }
 
 func (app *BaseApp) Run(ctx context.Context) error {
@@ -255,11 +284,20 @@ func (app *BaseApp) Run(ctx context.Context) error {
 		return err
 	}
 
-	if runtime.GOOS == "windows" {
-		sig := <-app.fxApp.Wait()
-		app.logSignal(sig.Signal)
+	fxApp := app.fxApp.Load()
+	if fxApp == nil {
+		return errors.New("app: not booted")
+	}
 
-		return app.Stop(ctx)
+	if runtime.GOOS == "windows" {
+		select {
+		case sig := <-fxApp.Wait():
+			app.logSignal(sig.Signal)
+
+			return app.Stop(ctx)
+		case <-app.done:
+			return app.stopErr
+		}
 	}
 
 	restartSignal := make(chan os.Signal, 1)
@@ -268,7 +306,7 @@ func (app *BaseApp) Run(ctx context.Context) error {
 	defer signal.Stop(restartSignal)
 
 	select {
-	case sig := <-app.fxApp.Wait():
+	case sig := <-fxApp.Wait():
 		app.logSignal(sig.Signal)
 
 		return app.Stop(ctx)
@@ -276,6 +314,10 @@ func (app *BaseApp) Run(ctx context.Context) error {
 		app.logSignal(sig)
 
 		return app.Restart(ctx)
+	case <-app.done:
+		// Stop or Restart was invoked directly by application code; the
+		// process was not replaced, so surface the outcome and exit.
+		return app.stopErr
 	}
 }
 
@@ -284,7 +326,12 @@ func (app *BaseApp) logSignal(sig os.Signal) {
 }
 
 func (app *BaseApp) start(event *StartEvent) error {
-	if err := app.fxApp.Start(event.Ctx); err != nil {
+	fxApp := app.fxApp.Load()
+	if fxApp == nil {
+		return errors.New("app: not booted")
+	}
+
+	if err := fxApp.Start(event.Ctx); err != nil {
 		return fmt.Errorf("app: unable to start: %w", err)
 	}
 
@@ -292,7 +339,12 @@ func (app *BaseApp) start(event *StartEvent) error {
 }
 
 func (app *BaseApp) stop(event *StopEvent) error {
-	if err := app.fxApp.Stop(event.Ctx); err != nil {
+	fxApp := app.fxApp.Load()
+	if fxApp == nil {
+		return errors.New("app: not booted")
+	}
+
+	if err := fxApp.Stop(event.Ctx); err != nil {
 		if !event.IsRestart {
 			return err
 		}
@@ -306,18 +358,16 @@ func (app *BaseApp) restart(event *StopEvent) error {
 		return event.Next()
 	}
 
-	app.reset()
-
-	execPath, err := os.Executable()
-	if err != nil {
-		return err
+	// /proc/self/exe stays valid even if the binary on disk was replaced or
+	// deleted, unlike the path reported by os.Executable.
+	execPath := "/proc/self/exe"
+	if _, err := os.Stat(execPath); err != nil {
+		if execPath, err = os.Executable(); err != nil {
+			return err
+		}
 	}
-	return syscall.Exec(execPath, os.Args, os.Environ())
-}
 
-func (app *BaseApp) reset() {
-	app.fxApp = nil
-	app.fxLogger = nil
+	return syscall.Exec(execPath, os.Args, os.Environ())
 }
 
 func (app *BaseApp) createFxApp(event *BootEvent) error {
@@ -327,13 +377,13 @@ func (app *BaseApp) createFxApp(event *BootEvent) error {
 
 	app.fxLogger = event.Logger
 
-	app.fxApp = fx.New(
+	app.fxApp.Store(fx.New(
 		fx.StartTimeout(app.startTimeout),
 		fx.StopTimeout(app.stopTimeout),
 		fx.WithLogger(func() fxevent.Logger { return app.fxLogger }),
 		fx.Supply(fx.Annotate(app, fx.As(new(App)))),
 		fx.Options(event.Options...),
-	)
+	))
 
 	return event.Next()
 }
