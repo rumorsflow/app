@@ -58,6 +58,15 @@ func (c *validatedConfig) Validate() error {
 	return nil
 }
 
+type validatedCtxConfig struct {
+	validateCalls int
+}
+
+func (c *validatedCtxConfig) Validate(context.Context) error {
+	c.validateCalls++
+	return nil
+}
+
 type ctxValidatedConfig struct {
 	Fail bool `json:"fail"`
 
@@ -282,6 +291,18 @@ func TestLoadConfig(t *testing.T) {
 		a := configApp(app.Config{})
 
 		var cfg validatedConfig
+		if err := a.LoadConfig(ctx, &cfg); err != nil {
+			t.Fatalf("LoadConfig() = %v", err)
+		}
+		if cfg.validateCalls != 1 {
+			t.Errorf("Validate called %d times, want 1", cfg.validateCalls)
+		}
+	})
+
+	t.Run("validate context called once", func(t *testing.T) {
+		a := configApp(app.Config{})
+
+		var cfg validatedCtxConfig
 		if err := a.LoadConfig(ctx, &cfg); err != nil {
 			t.Fatalf("LoadConfig() = %v", err)
 		}

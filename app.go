@@ -26,6 +26,9 @@ type (
 	validatable interface {
 		Validate() error
 	}
+	validatableCtx interface {
+		Validate(context.Context) error
+	}
 	validatableWithContext interface {
 		ValidateWithContext(context.Context) error
 	}
@@ -194,15 +197,17 @@ func (app *BaseApp) LoadConfig(ctx context.Context, outs ...any) error {
 			c.SetDefaults()
 		}
 
+		var err error
 		switch v := out.(type) {
 		case validatableWithContext:
-			if err := v.ValidateWithContext(ctx); err != nil {
-				return fmt.Errorf("failed to validate config: %w", err)
-			}
+			err = v.ValidateWithContext(ctx)
+		case validatableCtx:
+			err = v.Validate(ctx)
 		case validatable:
-			if err := v.Validate(); err != nil {
-				return fmt.Errorf("failed to validate config: %w", err)
-			}
+			err = v.Validate()
+		}
+		if err != nil {
+			return fmt.Errorf("failed to validate config: %w", err)
 		}
 	}
 	return nil
