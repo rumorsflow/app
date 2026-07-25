@@ -77,9 +77,10 @@ type Config struct {
 	ConfigUnmarshal func(ctx context.Context, data []byte, out any) error
 	ConfigRaw       []byte
 	ConfigFiles     []string
-	EnvPrefix       string
 	Name            string
 	Version         string
+	EnvPrefix       string
+	EnvOptions      *env.Options
 }
 
 type BaseApp struct {
@@ -87,12 +88,12 @@ type BaseApp struct {
 	stopTimeout     time.Duration
 	name            string
 	version         string
-	envPrefix       string
 	configFiles     []string
 	configRaw       []byte
 	configUnmarshal func(ctx context.Context, data []byte, out any) error
 	fxApp           atomic.Pointer[fx.App]
 	fxLogger        fxevent.Logger
+	envOptions      env.Options
 	onBootstrap     *hook.Hook[*BootEvent]
 	onStart         *hook.Hook[*StartEvent]
 	onStop          *hook.Hook[*StopEvent]
@@ -122,15 +123,23 @@ func LoadConfig[C any]() func(*BootEvent) error {
 }
 
 func NewBaseApp(cfg Config) *BaseApp {
+	var envOptions env.Options
+	if cfg.EnvOptions != nil {
+		envOptions = *cfg.EnvOptions
+	}
+	if cfg.EnvPrefix != "" {
+		envOptions.Prefix = cfg.EnvPrefix
+	}
+
 	return &BaseApp{
 		startTimeout:    cfg.StartTimeout,
 		stopTimeout:     cfg.StopTimeout,
 		name:            cfg.Name,
 		version:         cfg.Version,
-		envPrefix:       cfg.EnvPrefix,
 		configFiles:     cfg.ConfigFiles,
 		configRaw:       cfg.ConfigRaw,
 		configUnmarshal: cfg.ConfigUnmarshal,
+		envOptions:      envOptions,
 		onBootstrap:     &hook.Hook[*BootEvent]{},
 		onStart:         &hook.Hook[*StartEvent]{},
 		onStop:          &hook.Hook[*StopEvent]{},
@@ -167,29 +176,34 @@ func (app *BaseApp) OnStop() *hook.Hook[*StopEvent] {
 }
 
 func (app *BaseApp) LoadConfig(ctx context.Context, outs ...any) error {
-	files := make([][]byte, len(app.configFiles))
-	for i, file := range app.configFiles {
-		data, err := os.ReadFile(file)
-		if err != nil {
-			return fmt.Errorf("failed to read config file %s: %w", file, err)
+	var files [][]byte
+	if app.configUnmarshal != nil {
+		files = make([][]byte, len(app.configFiles))
+		for i, file := range app.configFiles {
+			data, err := os.ReadFile(file)
+			if err != nil {
+				return fmt.Errorf("failed to read config file %s: %w", file, err)
+			}
+			files[i] = data
 		}
-		files[i] = data
 	}
 
 	for _, out := range outs {
-		if len(app.configRaw) > 0 {
-			if err := app.configUnmarshal(ctx, app.configRaw, out); err != nil {
-				return err
+		if app.configUnmarshal != nil {
+			if len(app.configRaw) > 0 {
+				if err := app.configUnmarshal(ctx, app.configRaw, out); err != nil {
+					return err
+				}
+			}
+
+			for _, file := range files {
+				if err := app.configUnmarshal(ctx, file, out); err != nil {
+					return err
+				}
 			}
 		}
 
-		for _, file := range files {
-			if err := app.configUnmarshal(ctx, file, out); err != nil {
-				return err
-			}
-		}
-
-		if err := env.ParseWithOptions(out, env.Options{Prefix: app.envPrefix}); err != nil {
+		if err := env.ParseWithOptions(out, app.envOptions); err != nil {
 			return err
 		}
 
