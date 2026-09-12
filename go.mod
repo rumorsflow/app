@@ -4,7 +4,7 @@ go 1.27
 
 require (
 	github.com/caarlos0/env/v11 v11.4.1
-	github.com/gowool/hook v0.0.0-20260912134526-b71262b333d6
+	github.com/gowool/hook v0.0.0-20260912171644-31a7141ce675
 	github.com/joho/godotenv v1.5.1
 	go.uber.org/fx v1.24.0
 )

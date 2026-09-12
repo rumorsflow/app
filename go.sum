@@ -2,8 +2,8 @@ github.com/caarlos0/env/v11 v11.4.1 h1:fYwH0sWEsBSMPG7t4e/PEfTFzrWrpjyygXyUnWiSw
 github.com/caarlos0/env/v11 v11.4.1/go.mod h1:qupehSf/Y0TUTsxKywqRt/vJjN5nz6vauiYEUUr8P4U=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/gowool/hook v0.0.0-20260912134526-b71262b333d6 h1:FtbDuT7k6HzeaAaomtmBCTjBw6XtfPL9GArowKzvNF8=
-github.com/gowool/hook v0.0.0-20260912134526-b71262b333d6/go.mod h1:0UXze3JpOi4OYXmATZvfuhBS9L1VlGq/lUdrgq6s1O4=
+github.com/gowool/hook v0.0.0-20260912171644-31a7141ce675 h1:VScHDyksfNPtyiMY9oRMHmKzOsbXGZnv7Od4F1gwGkA=
+github.com/gowool/hook v0.0.0-20260912171644-31a7141ce675/go.mod h1:0UXze3JpOi4OYXmATZvfuhBS9L1VlGq/lUdrgq6s1O4=
 github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=
 github.com/joho/godotenv v1.5.1/go.mod h1:f4LDr5Voq0i2e/R5DDNOoa2zzDfwtkZa6DnEwAbqwq4=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
