@@ -173,6 +173,11 @@ func waitErr(t *testing.T, ch <-chan error) error {
 	}
 }
 
+type ambientConfig struct {
+	Name  string `env:"NAME,required"`
+	Level string `env:"LEVEL" envDefault:"info"`
+}
+
 func TestNewBaseApp(t *testing.T) {
 	a := app.NewBaseApp(app.Config{
 		StartTimeout: time.Minute,
@@ -239,6 +244,38 @@ func TestLoadConfig(t *testing.T) {
 		}
 		if cfg.Addr != "env" || cfg.Port != 1 {
 			t.Errorf("cfg = %+v, want Addr=env Port=1", cfg)
+		}
+	})
+
+	t.Run("ambient env overrides global env", func(t *testing.T) {
+		t.Setenv("APP_ENV", "prod")
+		t.Setenv("TESTAPP_ADDR", "global")
+		t.Setenv("TESTAPP_PORT", "1")
+		t.Setenv("PROD_TESTAPP_ADDR", "ambient")
+
+		a := configApp(app.Config{EnvPrefix: "TESTAPP_"})
+
+		var cfg netConfig
+		if err := a.LoadConfig(ctx, &cfg); err != nil {
+			t.Fatalf("LoadConfig() = %v", err)
+		}
+		if cfg.Addr != "ambient" || cfg.Port != 1 {
+			t.Errorf("cfg = %+v, want Addr=ambient Port=1", cfg)
+		}
+	})
+
+	t.Run("ambient env keeps defaults and required satisfied", func(t *testing.T) {
+		t.Setenv("APP_ENV", "prod")
+		t.Setenv("TESTAPP_NAME", "global")
+
+		a := configApp(app.Config{EnvPrefix: "TESTAPP_"})
+
+		var cfg ambientConfig
+		if err := a.LoadConfig(ctx, &cfg); err != nil {
+			t.Fatalf("LoadConfig() = %v", err)
+		}
+		if cfg.Name != "global" || cfg.Level != "info" {
+			t.Errorf("cfg = %+v, want Name=global Level=info", cfg)
 		}
 	})
 

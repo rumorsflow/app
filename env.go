@@ -6,7 +6,10 @@ import (
 	"github.com/joho/godotenv"
 )
 
-const envDotenv = "DOTENV_PATH"
+const (
+	envDotenv = "DOTENV_PATH"
+	envAppEnv = "APP_ENV"
+)
 
 func init() {
 	_ = godotenv.Load()

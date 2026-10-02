@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -94,6 +96,7 @@ type BaseApp struct {
 	fxApp           atomic.Pointer[fx.App]
 	fxLogger        fxevent.Logger
 	envOptions      env.Options
+	envAmbient      string
 	onBootstrap     *hook.Hook[*BootEvent]
 	onStart         *hook.Hook[*StartEvent]
 	onStop          *hook.Hook[*StopEvent]
@@ -131,6 +134,11 @@ func NewBaseApp(cfg Config) *BaseApp {
 		envOptions.Prefix = cfg.EnvPrefix
 	}
 
+	var envAmbient string
+	if appEnv := os.Getenv(envAppEnv); appEnv != "" {
+		envAmbient = strings.ToUpper(appEnv) + "_" + envOptions.Prefix
+	}
+
 	return &BaseApp{
 		startTimeout:    cfg.StartTimeout,
 		stopTimeout:     cfg.StopTimeout,
@@ -140,6 +148,7 @@ func NewBaseApp(cfg Config) *BaseApp {
 		configRaw:       cfg.ConfigRaw,
 		configUnmarshal: cfg.ConfigUnmarshal,
 		envOptions:      envOptions,
+		envAmbient:      envAmbient,
 		onBootstrap:     &hook.Hook[*BootEvent]{},
 		onStart:         &hook.Hook[*StartEvent]{},
 		onStop:          &hook.Hook[*StopEvent]{},
@@ -188,6 +197,11 @@ func (app *BaseApp) LoadConfig(ctx context.Context, outs ...any) error {
 		}
 	}
 
+	envOptions := app.envOptions
+	if app.envAmbient != "" {
+		envOptions.Environment = app.ambientEnvironment()
+	}
+
 	for _, out := range outs {
 		if app.configUnmarshal != nil {
 			if len(app.configRaw) > 0 {
@@ -203,7 +217,7 @@ func (app *BaseApp) LoadConfig(ctx context.Context, outs ...any) error {
 			}
 		}
 
-		if err := env.ParseWithOptions(out, app.envOptions); err != nil {
+		if err := env.ParseWithOptions(out, envOptions); err != nil {
 			return err
 		}
 
@@ -225,6 +239,28 @@ func (app *BaseApp) LoadConfig(ctx context.Context, outs ...any) error {
 		}
 	}
 	return nil
+}
+
+// ambientEnvironment returns the environment with every ambient variable
+// (APP_ENV-prefixed, e.g. PROD_MYAPP_PORT) copied over its global counterpart
+// (MYAPP_PORT), so a single parse sees ambient values as overrides while
+// defaults and required checks still apply only once.
+//
+// The "unset" tag option only unsets the global key, so the ambient variable
+// stays in the process environment.
+func (app *BaseApp) ambientEnvironment() map[string]string {
+	environment := app.envOptions.Environment
+	if environment == nil {
+		environment = env.ToMap(os.Environ())
+	}
+
+	merged := maps.Clone(environment)
+	for key, value := range environment {
+		if rest, ok := strings.CutPrefix(key, app.envAmbient); ok {
+			merged[app.envOptions.Prefix+rest] = value
+		}
+	}
+	return merged
 }
 
 func (app *BaseApp) Boot(ctx context.Context) error {
